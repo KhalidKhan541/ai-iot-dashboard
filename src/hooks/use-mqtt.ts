@@ -1,157 +1,243 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import mqtt, { MqttClient, IClientOptions, IClientPublishOptions } from "mqtt";
+import { useState, useEffect, useCallback, useRef } from "react";
 
-export type MqttConnectionStatus = "connecting" | "connected" | "reconnecting" | "disconnected" | "error";
+interface MQTTConfig {
+  broker: string;
+  port?: number;
+  clientId?: string;
+  username?: string;
+  password?: string;
+  protocol?: "mqtt" | "mqtts" | "ws" | "wss";
+  keepalive?: number;
+  clean?: boolean;
+}
 
-export interface MqttMessage {
+interface MQTTMessage {
   topic: string;
-  message: Buffer;
-  timestamp: Date;
+  payload: string;
+  qos: 0 | 1 | 2;
+  retain: boolean;
+  timestamp: number;
 }
 
-interface UseMqttOptions {
-  brokerUrl: string;
-  options?: IClientOptions;
-  autoConnect?: boolean;
-  topics?: string[];
-  onMessage?: (topic: string, message: Buffer) => void;
+type MQTTCallback = (message: MQTTMessage) => void;
+
+interface UseMQTTOptions extends MQTTConfig {
+  enabled?: boolean;
+  autoReconnect?: boolean;
+  reconnectInterval?: number;
+  maxReconnectAttempts?: number;
   onConnect?: () => void;
-  onDisconnect?: () => void;
+  onDisconnect?: (reason?: string) => void;
   onError?: (error: Error) => void;
+  onMessage?: (message: MQTTMessage) => void;
 }
 
-interface UseMqttReturn {
-  client: MqttClient | null;
-  status: MqttConnectionStatus;
-  messages: MqttMessage[];
-  lastMessage: MqttMessage | null;
-  connect: () => void;
-  disconnect: () => void;
-  publish: (topic: string, message: string | Buffer, options?: IClientPublishOptions) => void;
-  subscribe: (topic: string | string[]) => void;
-  unsubscribe: (topic: string | string[]) => void;
+interface UseMQTTResult {
+  isConnected: boolean;
+  isConnecting: boolean;
+  connectionStatus: "disconnected" | "connecting" | "connected" | "error";
+  error: Error | null;
+  connect: () => Promise<void>;
+  disconnect: () => Promise<void>;
+  publish: (topic: string, payload: string | object, options?: { qos?: 0 | 1 | 2; retain?: boolean }) => Promise<void>;
+  subscribe: (topic: string, callback: MQTTCallback, qos?: 0 | 1 | 2) => Promise<void>;
+  unsubscribe: (topic: string) => Promise<void>;
+  messages: MQTTMessage[];
+  lastMessage: MQTTMessage | null;
   clearMessages: () => void;
 }
 
-export function useMqtt({
-  brokerUrl,
-  options = {},
-  autoConnect = true,
-  topics = [],
-  onMessage,
-  onConnect,
-  onDisconnect,
-  onError,
-}: UseMqttOptions): UseMqttReturn {
-  const [client, setClient] = useState<MqttClient | null>(null);
-  const [status, setStatus] = useState<MqttConnectionStatus>("disconnected");
-  const [messages, setMessages] = useState<MqttMessage[]>([]);
-  const [lastMessage, setLastMessage] = useState<MqttMessage | null>(null);
-  const clientRef = useRef<MqttClient | null>(null);
-  const mountedRef = useRef(true);
+export function useMQTT(options: UseMQTTOptions): UseMQTTResult {
+  const {
+    broker,
+    port,
+    clientId,
+    username,
+    password,
+    protocol = "mqtt",
+    keepalive = 60,
+    clean = true,
+    enabled = true,
+    autoReconnect = true,
+    reconnectInterval = 3000,
+    maxReconnectAttempts = 10,
+    onConnect,
+    onDisconnect,
+    onError,
+    onMessage,
+  } = options;
 
-  const handleConnect = useCallback(() => {
-    if (!mountedRef.current) return;
-    setStatus("connected");
-    onConnect?.();
-  }, [onConnect]);
+  const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<
+    "disconnected" | "connecting" | "connected" | "error"
+  >("disconnected");
+  const [error, setError] = useState<Error | null>(null);
+  const [messages, setMessages] = useState<MQTTMessage[]>([]);
+  const [lastMessage, setLastMessage] = useState<MQTTMessage | null>(null);
 
-  const handleDisconnect = useCallback(() => {
-    if (!mountedRef.current) return;
-    setStatus("disconnected");
-    onDisconnect?.();
-  }, [onDisconnect]);
+  const clientRef = useRef<unknown>(null);
+  const subscriptionsRef = useRef<Map<string, MQTTCallback>>(new Map());
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const callbacksRef = useRef({ onConnect, onDisconnect, onError, onMessage });
+  callbacksRef.current = { onConnect, onDisconnect, onError, onMessage };
 
-  const handleError = useCallback(
-    (error: Error) => {
-      if (!mountedRef.current) return;
-      setStatus("error");
-      onError?.(error);
-    },
-    [onError]
-  );
+  const generateClientId = useCallback(() => {
+    return (
+      clientId ??
+      `mqtt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+    );
+  }, [clientId]);
 
-  const handleMessage = useCallback(
-    (topic: string, message: Buffer) => {
-      if (!mountedRef.current) return;
-      const msg: MqttMessage = {
-        topic,
-        message,
-        timestamp: new Date(),
+  const connect = useCallback(async () => {
+    if (isConnected || isConnecting) return;
+
+    setIsConnecting(true);
+    setConnectionStatus("connecting");
+    setError(null);
+
+    try {
+      const wsUrl = `${protocol === "mqtts" ? "wss" : "ws"}://${broker}:${port ?? (protocol === "mqtts" ? 8884 : 8083)}/mqtt`;
+
+      const ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        setIsConnected(true);
+        setIsConnecting(false);
+        setConnectionStatus("connected");
+        reconnectAttemptsRef.current = 0;
+        callbacksRef.current.onConnect?.();
       };
-      setMessages((prev) => [...prev.slice(-99), msg]);
-      setLastMessage(msg);
-      onMessage?.(topic, message);
-    },
-    [onMessage]
-  );
 
-  const handleReconnect = useCallback(() => {
-    if (!mountedRef.current) return;
-    setStatus("reconnecting");
-  }, []);
+      ws.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data) as MQTTMessage;
+          setLastMessage(parsed);
+          setMessages((prev) => [...prev.slice(-99), parsed]);
+          callbacksRef.current.onMessage?.(parsed);
 
-  const connect = useCallback(() => {
-    if (clientRef.current) {
-      clientRef.current.end(true);
+          const callback = subscriptionsRef.current.get(parsed.topic);
+          if (callback) {
+            callback(parsed);
+          }
+
+          for (const [pattern, cb] of subscriptionsRef.current) {
+            if (pattern.includes("#") || pattern.includes("+")) {
+              if (matchTopic(pattern, parsed.topic)) {
+                cb(parsed);
+              }
+            }
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      };
+
+      ws.onerror = () => {
+        const error = new Error("WebSocket connection error");
+        setError(error);
+        setConnectionStatus("error");
+        setIsConnecting(false);
+        callbacksRef.current.onError?.(error);
+      };
+
+      ws.onclose = () => {
+        setIsConnected(false);
+        setIsConnecting(false);
+        setConnectionStatus("disconnected");
+        callbacksRef.current.onDisconnect?.();
+
+        if (
+          autoReconnect &&
+          reconnectAttemptsRef.current < maxReconnectAttempts
+        ) {
+          reconnectAttemptsRef.current++;
+          reconnectTimerRef.current = setTimeout(() => {
+            connect();
+          }, reconnectInterval);
+        }
+      };
+
+      clientRef.current = ws;
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error("Connection failed");
+      setError(error);
+      setConnectionStatus("error");
+      setIsConnecting(false);
+      callbacksRef.current.onError?.(error);
     }
-
-    setStatus("connecting");
-
-    const mqttClient = mqtt.connect(brokerUrl, {
-      reconnectPeriod: 5000,
-      connectTimeout: 10000,
-      clean: true,
-      ...options,
-    });
-
-    mqttClient.on("connect", handleConnect);
-    mqttClient.on("disconnect", handleDisconnect);
-    mqttClient.on("error", handleError);
-    mqttClient.on("message", handleMessage);
-    mqttClient.on("reconnect", handleReconnect);
-
-    clientRef.current = mqttClient;
-    setClient(mqttClient);
   }, [
-    brokerUrl,
-    options,
-    handleConnect,
-    handleDisconnect,
-    handleError,
-    handleMessage,
-    handleReconnect,
+    broker,
+    port,
+    protocol,
+    clientId,
+    isConnected,
+    isConnecting,
+    autoReconnect,
+    reconnectInterval,
+    maxReconnectAttempts,
   ]);
 
-  const disconnect = useCallback(() => {
-    if (clientRef.current) {
-      clientRef.current.end(true);
-      clientRef.current = null;
-      setClient(null);
-      setStatus("disconnected");
+  const disconnect = useCallback(async () => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
     }
-  }, []);
+    reconnectAttemptsRef.current = maxReconnectAttempts;
+
+    const ws = clientRef.current as WebSocket | null;
+    if (ws) {
+      ws.close();
+    }
+
+    setIsConnected(false);
+    setConnectionStatus("disconnected");
+    callbacksRef.current.onDisconnect?.("client disconnect");
+  }, [maxReconnectAttempts]);
 
   const publish = useCallback(
-    (topic: string, message: string | Buffer, options?: IClientPublishOptions) => {
-      if (clientRef.current?.connected) {
-        clientRef.current.publish(topic, message, options);
+    async (
+      topic: string,
+      payload: string | object,
+      pubOptions?: { qos?: 0 | 1 | 2; retain?: boolean }
+    ) => {
+      const ws = clientRef.current as WebSocket | null;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        throw new Error("Not connected");
+      }
+
+      const message = {
+        topic,
+        payload: typeof payload === "object" ? JSON.stringify(payload) : payload,
+        qos: pubOptions?.qos ?? 1,
+        retain: pubOptions?.retain ?? false,
+      };
+
+      ws.send(JSON.stringify(message));
+    },
+    []
+  );
+
+  const subscribe = useCallback(
+    async (topic: string, callback: MQTTCallback, qos: 0 | 1 | 2 = 1) => {
+      subscriptionsRef.current.set(topic, callback);
+
+      const ws = clientRef.current as WebSocket | null;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "subscribe", topic, qos }));
       }
     },
     []
   );
 
-  const subscribe = useCallback((topic: string | string[]) => {
-    if (clientRef.current?.connected) {
-      clientRef.current.subscribe(topic);
-    }
-  }, []);
+  const unsubscribe = useCallback(async (topic: string) => {
+    subscriptionsRef.current.delete(topic);
 
-  const unsubscribe = useCallback((topic: string | string[]) => {
-    if (clientRef.current?.connected) {
-      clientRef.current.unsubscribe(topic);
+    const ws = clientRef.current as WebSocket | null;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "unsubscribe", topic }));
     }
   }, []);
 
@@ -161,37 +247,39 @@ export function useMqtt({
   }, []);
 
   useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (autoConnect) {
+    if (enabled) {
       connect();
     }
     return () => {
       disconnect();
     };
-  }, [autoConnect]);
-
-  useEffect(() => {
-    if (status === "connected" && topics.length > 0) {
-      subscribe(topics);
-    }
-  }, [status, topics, subscribe]);
+  }, [enabled, connect, disconnect]);
 
   return {
-    client,
-    status,
-    messages,
-    lastMessage,
+    isConnected,
+    isConnecting,
+    connectionStatus,
+    error,
     connect,
     disconnect,
     publish,
     subscribe,
     unsubscribe,
+    messages,
+    lastMessage,
     clearMessages,
   };
+}
+
+function matchTopic(pattern: string, topic: string): boolean {
+  const patternParts = pattern.split("/");
+  const topicParts = topic.split("/");
+
+  for (let i = 0; i < patternParts.length; i++) {
+    if (patternParts[i] === "#") return true;
+    if (patternParts[i] === "+") continue;
+    if (patternParts[i] !== topicParts[i]) return false;
+  }
+
+  return patternParts.length === topicParts.length;
 }
