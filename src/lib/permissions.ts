@@ -1,515 +1,283 @@
-import { prisma } from "@/lib/db";
-import { Prisma, OrgMember } from "@prisma/client";
+// ── Types ────────────────────────────────────────────────────────────────────
 
-// ─── Role Hierarchy ───────────────────────────────────────────────────────────
+export type Permission =
+  | 'device:read'
+  | 'device:write'
+  | 'device:delete'
+  | 'device:admin'
+  | 'alert:read'
+  | 'alert:write'
+  | 'alert:acknowledge'
+  | 'alert:admin'
+  | 'dashboard:read'
+  | 'dashboard:write'
+  | 'dashboard:delete'
+  | 'dashboard:admin'
+  | 'analytics:read'
+  | 'analytics:write'
+  | 'analytics:admin'
+  | 'rule:read'
+  | 'rule:write'
+  | 'rule:delete'
+  | 'rule:admin'
+  | 'user:read'
+  | 'user:write'
+  | 'user:admin'
+  | 'system:read'
+  | 'system:admin';
 
-const ROLE_HIERARCHY: Record<string, number> = {
-  SUPER_ADMIN: 100,
-  ORG_ADMIN: 80,
-  DEVICE_MANAGER: 60,
-  ORG_MEMBER: 40,
-  VIEWER: 20,
-};
+export type Role = 'viewer' | 'operator' | 'admin' | 'super_admin';
 
-// ─── Permission Definitions ───────────────────────────────────────────────────
+export interface User {
+  id: string;
+  email: string;
+  username: string;
+  role: Role;
+  permissions: Permission[];
+  orgId: string;
+  createdAt: Date;
+  updatedAt: Date;
+  lastLoginAt?: Date;
+  isActive: boolean;
+}
 
-const ROLE_PERMISSIONS: Record<string, string[]> = {
-  SUPER_ADMIN: [
-    "organization:create",
-    "organization:read",
-    "organization:update",
-    "organization:delete",
-    "organization:manage_members",
-    "device:create",
-    "device:read",
-    "device:update",
-    "device:delete",
-    "device:manage",
-    "device:data:read",
-    "device:data:write",
-    "dashboard:create",
-    "dashboard:read",
-    "dashboard:update",
-    "dashboard:delete",
-    "dashboard:share",
-    "alert:read",
-    "alert:manage",
-    "alert:acknowledge",
-    "alert:resolve",
-    "rule:create",
-    "rule:read",
-    "rule:update",
-    "rule:delete",
-    "metric:read",
-    "metric:create",
-    "metric:delete",
-    "integration:create",
-    "integration:read",
-    "integration:update",
-    "integration:delete",
-    "report:create",
-    "report:read",
-    "report:update",
-    "report:delete",
-    "audit:read",
-    "user:read",
-    "user:update",
-    "user:delete",
-    "settings:read",
-    "settings:update",
+export interface PermissionCheck {
+  granted: boolean;
+  reason?: string;
+  requiredPermission: Permission;
+  userRole: Role;
+  userPermissions: Permission[];
+}
+
+export interface AccessContext {
+  userId: string;
+  role: Role;
+  permissions: Permission[];
+  orgId: string;
+  deviceId?: string;
+  dashboardId?: string;
+}
+
+// ── Role-Permission Matrix ──────────────────────────────────────────────────
+
+const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
+  viewer: [
+    'device:read',
+    'alert:read',
+    'dashboard:read',
+    'analytics:read',
+    'rule:read',
+    'user:read',
+    'system:read',
   ],
-  ORG_ADMIN: [
-    "organization:read",
-    "organization:update",
-    "organization:manage_members",
-    "device:create",
-    "device:read",
-    "device:update",
-    "device:delete",
-    "device:manage",
-    "device:data:read",
-    "device:data:write",
-    "dashboard:create",
-    "dashboard:read",
-    "dashboard:update",
-    "dashboard:delete",
-    "dashboard:share",
-    "alert:read",
-    "alert:manage",
-    "alert:acknowledge",
-    "alert:resolve",
-    "rule:create",
-    "rule:read",
-    "rule:update",
-    "rule:delete",
-    "metric:read",
-    "metric:create",
-    "metric:delete",
-    "integration:create",
-    "integration:read",
-    "integration:update",
-    "integration:delete",
-    "report:create",
-    "report:read",
-    "report:update",
-    "report:delete",
-    "audit:read",
-    "user:read",
-    "user:update",
-    "settings:read",
-    "settings:update",
+  operator: [
+    'device:read',
+    'device:write',
+    'alert:read',
+    'alert:write',
+    'alert:acknowledge',
+    'dashboard:read',
+    'dashboard:write',
+    'analytics:read',
+    'analytics:write',
+    'rule:read',
+    'rule:write',
+    'user:read',
+    'system:read',
   ],
-  DEVICE_MANAGER: [
-    "organization:read",
-    "device:create",
-    "device:read",
-    "device:update",
-    "device:manage",
-    "device:data:read",
-    "device:data:write",
-    "dashboard:create",
-    "dashboard:read",
-    "dashboard:update",
-    "alert:read",
-    "alert:acknowledge",
-    "alert:resolve",
-    "rule:create",
-    "rule:read",
-    "rule:update",
-    "metric:read",
-    "metric:create",
-    "integration:read",
-    "report:create",
-    "report:read",
-    "user:read",
+  admin: [
+    'device:read',
+    'device:write',
+    'device:delete',
+    'device:admin',
+    'alert:read',
+    'alert:write',
+    'alert:acknowledge',
+    'alert:admin',
+    'dashboard:read',
+    'dashboard:write',
+    'dashboard:delete',
+    'dashboard:admin',
+    'analytics:read',
+    'analytics:write',
+    'analytics:admin',
+    'rule:read',
+    'rule:write',
+    'rule:delete',
+    'rule:admin',
+    'user:read',
+    'user:write',
+    'user:admin',
+    'system:read',
+    'system:admin',
   ],
-  ORG_MEMBER: [
-    "organization:read",
-    "device:read",
-    "device:data:read",
-    "dashboard:create",
-    "dashboard:read",
-    "dashboard:update",
-    "alert:read",
-    "alert:acknowledge",
-    "rule:read",
-    "metric:read",
-    "report:read",
-    "user:read",
-  ],
-  VIEWER: [
-    "organization:read",
-    "device:read",
-    "device:data:read",
-    "dashboard:read",
-    "alert:read",
-    "rule:read",
-    "metric:read",
-    "report:read",
+  super_admin: [
+    'device:read',
+    'device:write',
+    'device:delete',
+    'device:admin',
+    'alert:read',
+    'alert:write',
+    'alert:acknowledge',
+    'alert:admin',
+    'dashboard:read',
+    'dashboard:write',
+    'dashboard:delete',
+    'dashboard:admin',
+    'analytics:read',
+    'analytics:write',
+    'analytics:admin',
+    'rule:read',
+    'rule:write',
+    'rule:delete',
+    'rule:admin',
+    'user:read',
+    'user:write',
+    'user:admin',
+    'system:read',
+    'system:admin',
   ],
 };
 
-// ─── Permission Checking ──────────────────────────────────────────────────────
+// ── Service ─────────────────────────────────────────────────────────────────
 
-export function getRolePermissions(role: string): string[] {
-  return ROLE_PERMISSIONS[role] ?? [];
-}
+export class PermissionService {
+  private users: Map<string, User> = new Map();
 
-export function hasPermission(role: string, permission: string): boolean {
-  const permissions = getRolePermissions(role);
-  return permissions.includes(permission);
-}
+  constructor(initialUsers: User[] = []) {
+    initialUsers.forEach(u => this.users.set(u.id, u));
+  }
 
-export function hasAnyPermission(role: string, permissions: string[]): boolean {
-  const rolePermissions = getRolePermissions(role);
-  return permissions.some((p) => rolePermissions.includes(p));
-}
+  addUser(user: User): void {
+    this.users.set(user.id, user);
+  }
 
-export function hasAllPermissions(role: string, permissions: string[]): boolean {
-  const rolePermissions = getRolePermissions(role);
-  return permissions.every((p) => rolePermissions.includes(p));
-}
+  getUser(id: string): User | undefined {
+    return this.users.get(id);
+  }
 
-export function isRoleHigherThan(role1: string, role2: string): boolean {
-  const level1 = ROLE_HIERARCHY[role1] ?? 0;
-  const level2 = ROLE_HIERARCHY[role2] ?? 0;
-  return level1 > level2;
-}
+  removeUser(id: string): boolean {
+    return this.users.delete(id);
+  }
 
-export function isRoleAtLeast(role: string, minimumRole: string): boolean {
-  const roleLevel = ROLE_HIERARCHY[role] ?? 0;
-  const minLevel = ROLE_HIERARCHY[minimumRole] ?? 0;
-  return roleLevel >= minLevel;
-}
-
-// ─── Organization Permission Checks ──────────────────────────────────────────
-
-export async function getUserOrganizationRole(
-  userId: string,
-  organizationId: string
-): Promise<string | null> {
-  const membership = await prisma.orgMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId,
-        userId,
-      },
-    },
-  });
-
-  return membership?.role ?? null;
-}
-
-export async function isOrganizationMember(
-  userId: string,
-  organizationId: string
-): Promise<boolean> {
-  const membership = await prisma.orgMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId,
-        userId,
-      },
-    },
-  });
-
-  return membership !== null;
-}
-
-export async function canAccessOrganization(
-  userId: string,
-  organizationId: string
-): Promise<{ allowed: boolean; role?: string }> {
-  const membership = await prisma.orgMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId,
-        userId,
-      },
-    },
-  });
-
-  if (!membership) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user?.role === "SUPER_ADMIN") {
-      return { allowed: true, role: "SUPER_ADMIN" };
+  hasPermission(userId: string, permission: Permission): PermissionCheck {
+    const user = this.users.get(userId);
+    if (!user) {
+      return {
+        granted: false,
+        reason: 'User not found',
+        requiredPermission: permission,
+        userRole: 'viewer',
+        userPermissions: [],
+      };
     }
-    return { allowed: false };
-  }
 
-  return { allowed: true, role: membership.role };
-}
-
-// ─── Device Permission Checks ─────────────────────────────────────────────────
-
-export async function canAccessDevice(
-  userId: string,
-  deviceId: string,
-  requiredPermission: string = "device:read"
-): Promise<boolean> {
-  const device = await prisma.device.findUnique({
-    where: { id: deviceId },
-    select: { organizationId: true },
-  });
-
-  if (!device) return false;
-
-  const membership = await prisma.orgMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: device.organizationId,
-        userId,
-      },
-    },
-  });
-
-  if (!membership) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user?.role === "SUPER_ADMIN") return true;
-    return false;
-  }
-
-  return hasPermission(membership.role, requiredPermission);
-}
-
-export async function canManageDevice(
-  userId: string,
-  deviceId: string
-): Promise<boolean> {
-  return canAccessDevice(userId, deviceId, "device:manage");
-}
-
-export async function canWriteDeviceData(
-  userId: string,
-  deviceId: string
-): Promise<boolean> {
-  return canAccessDevice(userId, deviceId, "device:data:write");
-}
-
-// ─── Dashboard Permission Checks ──────────────────────────────────────────────
-
-export async function canAccessDashboard(
-  userId: string,
-  dashboardId: string,
-  requiredPermission: string = "dashboard:read"
-): Promise<boolean> {
-  const dashboard = await prisma.dashboard.findUnique({
-    where: { id: dashboardId },
-    select: { organizationId: true, isPublic: true, ownerId: true },
-  });
-
-  if (!dashboard) return false;
-
-  if (dashboard.isPublic && requiredPermission === "dashboard:read") {
-    return true;
-  }
-
-  if (dashboard.ownerId === userId) return true;
-
-  const membership = await prisma.orgMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: dashboard.organizationId,
-        userId,
-      },
-    },
-  });
-
-  if (!membership) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user?.role === "SUPER_ADMIN") return true;
-    return false;
-  }
-
-  return hasPermission(membership.role, requiredPermission);
-}
-
-export async function canShareDashboard(
-  userId: string,
-  dashboardId: string
-): Promise<boolean> {
-  return canAccessDashboard(userId, dashboardId, "dashboard:share");
-}
-
-// ─── Alert Permission Checks ──────────────────────────────────────────────────
-
-export async function canManageAlert(
-  userId: string,
-  alertId: string
-): Promise<boolean> {
-  const alert = await prisma.alert.findUnique({
-    where: { id: alertId },
-    select: { deviceId: true },
-  });
-
-  if (!alert) return false;
-
-  const device = await prisma.device.findUnique({
-    where: { id: alert.deviceId },
-    select: { organizationId: true },
-  });
-
-  if (!device) return false;
-
-  const membership = await prisma.orgMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: device.organizationId,
-        userId,
-      },
-    },
-  });
-
-  if (!membership) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user?.role === "SUPER_ADMIN") return true;
-    return false;
-  }
-
-  return hasPermission(membership.role, "alert:manage");
-}
-
-export async function canAcknowledgeAlert(
-  userId: string,
-  alertId: string
-): Promise<boolean> {
-  const alert = await prisma.alert.findUnique({
-    where: { id: alertId },
-    select: { deviceId: true },
-  });
-
-  if (!alert) return false;
-
-  const device = await prisma.device.findUnique({
-    where: { id: alert.deviceId },
-    select: { organizationId: true },
-  });
-
-  if (!device) return false;
-
-  const membership = await prisma.orgMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: device.organizationId,
-        userId,
-      },
-    },
-  });
-
-  if (!membership) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user?.role === "SUPER_ADMIN") return true;
-    return false;
-  }
-
-  return hasPermission(membership.role, "alert:acknowledge");
-}
-
-// ─── Rule Permission Checks ───────────────────────────────────────────────────
-
-export async function canManageRule(
-  userId: string,
-  organizationId: string
-): Promise<boolean> {
-  const membership = await prisma.orgMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId,
-        userId,
-      },
-    },
-  });
-
-  if (!membership) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user?.role === "SUPER_ADMIN") return true;
-    return false;
-  }
-
-  return hasPermission(membership.role, "rule:create");
-}
-
-// ─── Integration Permission Checks ────────────────────────────────────────────
-
-export async function canManageIntegration(
-  userId: string,
-  organizationId: string
-): Promise<boolean> {
-  const membership = await prisma.orgMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId,
-        userId,
-      },
-    },
-  });
-
-  if (!membership) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user?.role === "SUPER_ADMIN") return true;
-    return false;
-  }
-
-  return hasPermission(membership.role, "integration:create");
-}
-
-// ─── Report Permission Checks ─────────────────────────────────────────────────
-
-export async function canManageReport(
-  userId: string,
-  organizationId: string
-): Promise<boolean> {
-  const membership = await prisma.orgMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId,
-        userId,
-      },
-    },
-  });
-
-  if (!membership) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user?.role === "SUPER_ADMIN") return true;
-    return false;
-  }
-
-  return hasPermission(membership.role, "report:create");
-}
-
-// ─── Utility Functions ────────────────────────────────────────────────────────
-
-export function getAllPermissions(): string[] {
-  const allPermissions = new Set<string>();
-  for (const permissions of Object.values(ROLE_PERMISSIONS)) {
-    for (const permission of permissions) {
-      allPermissions.add(permission);
+    if (!user.isActive) {
+      return {
+        granted: false,
+        reason: 'User account is inactive',
+        requiredPermission: permission,
+        userRole: user.role,
+        userPermissions: user.permissions,
+      };
     }
+
+    const rolePermissions = ROLE_PERMISSIONS[user.role] ?? [];
+    const allPermissions = [...new Set([...rolePermissions, ...user.permissions])];
+    const granted = allPermissions.includes(permission);
+
+    return {
+      granted,
+      reason: granted ? undefined : `Missing permission: ${permission}`,
+      requiredPermission: permission,
+      userRole: user.role,
+      userPermissions: allPermissions,
+    };
   }
-  return Array.from(allPermissions);
-}
 
-export function getRoles(): string[] {
-  return Object.keys(ROLE_PERMISSIONS);
-}
+  hasAnyPermission(userId: string, permissions: Permission[]): boolean {
+    return permissions.some(p => this.hasPermission(userId, p).granted);
+  }
 
-export function getRoleLevel(role: string): number {
-  return ROLE_HIERARCHY[role] ?? 0;
-}
+  hasAllPermissions(userId: string, permissions: Permission[]): boolean {
+    return permissions.every(p => this.hasPermission(userId, p).granted);
+  }
 
-export function canAssignRole(
-  assignerRole: string,
-  targetRole: string
-): boolean {
-  if (assignerRole === "SUPER_ADMIN") return true;
-  return isRoleHigherThan(assignerRole, targetRole);
-}
+  getUserPermissions(userId: string): Permission[] {
+    const user = this.users.get(userId);
+    if (!user) return [];
+    const rolePermissions = ROLE_PERMISSIONS[user.role] ?? [];
+    return [...new Set([...rolePermissions, ...user.permissions])];
+  }
 
-export function filterByOrganization<T extends { organizationId?: string }>(
-  items: T[],
-  organizationId: string
-): T[] {
-  return items.filter(
-    (item) => item.organizationId === organizationId || !item.organizationId
-  );
+  getRolePermissions(role: Role): Permission[] {
+    return [...(ROLE_PERMISSIONS[role] ?? [])];
+  }
+
+  canAccessResource(
+    context: AccessContext,
+    resourceType: 'device' | 'dashboard' | 'alert' | 'rule',
+    action: 'read' | 'write' | 'delete' | 'admin'
+  ): PermissionCheck {
+    const permission = `${resourceType}:${action}` as Permission;
+    return this.hasPermission(context.userId, permission);
+  }
+
+  canManageUser(managerId: string, targetUserId: string): boolean {
+    const manager = this.users.get(managerId);
+    const target = this.users.get(targetUserId);
+    if (!manager || !target) return false;
+
+    const roleHierarchy: Record<Role, number> = {
+      viewer: 0,
+      operator: 1,
+      admin: 2,
+      super_admin: 3,
+    };
+
+    return roleHierarchy[manager.role] > roleHierarchy[target.role];
+  }
+
+  getRoleHierarchyLevel(role: Role): number {
+    const hierarchy: Record<Role, number> = {
+      viewer: 0,
+      operator: 1,
+      admin: 2,
+      super_admin: 3,
+    };
+    return hierarchy[role] ?? 0;
+  }
+
+  isHigherRole(role1: Role, role2: Role): boolean {
+    return this.getRoleHierarchyLevel(role1) > this.getRoleHierarchyLevel(role2);
+  }
+
+  getPermissionsByResource(resource: string): Permission[] {
+    const allPermissions: Permission[] = [
+      'device:read', 'device:write', 'device:delete', 'device:admin',
+      'alert:read', 'alert:write', 'alert:acknowledge', 'alert:admin',
+      'dashboard:read', 'dashboard:write', 'dashboard:delete', 'dashboard:admin',
+      'analytics:read', 'analytics:write', 'analytics:admin',
+      'rule:read', 'rule:write', 'rule:delete', 'rule:admin',
+      'user:read', 'user:write', 'user:admin',
+      'system:read', 'system:admin',
+    ];
+    return allPermissions.filter(p => p.startsWith(`${resource}:`));
+  }
+
+  getUsersByRole(role: Role): User[] {
+    return Array.from(this.users.values()).filter(u => u.role === role);
+  }
+
+  getActiveUsers(): User[] {
+    return Array.from(this.users.values()).filter(u => u.isActive);
+  }
+
+  count(): number {
+    return this.users.size;
+  }
+
+  clear(): void {
+    this.users.clear();
+  }
 }

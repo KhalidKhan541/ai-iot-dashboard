@@ -1,237 +1,306 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { cn } from '@/lib/utils';
-import { useAppStore } from '@/store';
+import * as React from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Cpu,
+  Activity,
   Bell,
-  BarChart3,
-  Zap,
   Settings,
+  BarChart3,
   ChevronLeft,
   ChevronRight,
-  Home,
-  BellRing,
-  Shield,
-  TrendingUp,
-  Activity,
-  ChevronDown,
-  FileText,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
+  Zap,
+  BookOpen,
+  HelpCircle,
+  LogOut,
+  Menu,
+  X,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 
 interface NavItem {
   label: string;
   href: string;
-  icon: React.ComponentType<{ className?: string }>;
-  badge?: number;
-  children?: NavItem[];
+  icon: React.ReactNode;
+  badge?: string | number;
+  badgeVariant?: "default" | "success" | "warning" | "destructive";
 }
 
-const navItems: NavItem[] = [
-  { label: 'Overview', href: '/dashboard', icon: Home },
+interface SidebarProps {
+  collapsed?: boolean;
+  onCollapsedChange?: (collapsed: boolean) => void;
+  user?: {
+    name: string;
+    email: string;
+    avatar?: string;
+  };
+  notifications?: number;
+  className?: string;
+}
+
+const defaultNavItems: NavItem[] = [
   {
-    label: 'Dashboards',
-    href: '/dashboard/dashboards',
-    icon: LayoutDashboard,
-    children: [
-      { label: 'All Dashboards', href: '/dashboard/dashboards', icon: LayoutDashboard },
-      { label: 'Create New', href: '/dashboard/dashboards/create', icon: FileText },
-    ],
+    label: "Dashboard",
+    href: "/dashboards",
+    icon: <LayoutDashboard className="h-5 w-5" />,
   },
   {
-    label: 'Devices',
-    href: '/dashboard/devices',
-    icon: Cpu,
-    children: [
-      { label: 'All Devices', href: '/dashboard/devices', icon: Cpu },
-    ],
+    label: "Devices",
+    href: "/devices",
+    icon: <Cpu className="h-5 w-5" />,
+    badge: "12",
+    badgeVariant: "default",
   },
   {
-    label: 'Alerts',
-    href: '/dashboard/alerts',
-    icon: Bell,
-    badge: 3,
-    children: [
-      { label: 'Active Alerts', href: '/dashboard/alerts', icon: Bell },
-      { label: 'Alert Rules', href: '/dashboard/alerts/rules', icon: Shield },
-    ],
+    label: "Analytics",
+    href: "/analytics",
+    icon: <BarChart3 className="h-5 w-5" />,
   },
   {
-    label: 'Analytics',
-    href: '/dashboard/analytics',
-    icon: BarChart3,
-    children: [
-      { label: 'AI Insights', href: '/dashboard/analytics', icon: BarChart3 },
-      { label: 'Predictions', href: '/dashboard/analytics/predictions', icon: TrendingUp },
-    ],
+    label: "Rules",
+    href: "/rules",
+    icon: <Zap className="h-5 w-5" />,
   },
   {
-    label: 'Rules',
-    href: '/dashboard/rules',
-    icon: Zap,
-    children: [
-      { label: 'Rule Engine', href: '/dashboard/rules', icon: Zap },
-      { label: 'Create Rule', href: '/dashboard/rules/create', icon: FileText },
-    ],
+    label: "Alerts",
+    href: "/alerts",
+    icon: <Bell className="h-5 w-5" />,
+    badge: "3",
+    badgeVariant: "destructive",
   },
-  { label: 'Notifications', href: '/dashboard/notifications', icon: BellRing },
-  { label: 'Settings', href: '/dashboard/settings', icon: Settings },
+  {
+    label: "Activity",
+    href: "/notifications",
+    icon: <Activity className="h-5 w-5" />,
+  },
 ];
 
-export function Sidebar() {
+const bottomNavItems: NavItem[] = [
+  {
+    label: "Documentation",
+    href: "/docs",
+    icon: <BookOpen className="h-5 w-5" />,
+  },
+  {
+    label: "Help & Support",
+    href: "/help",
+    icon: <HelpCircle className="h-5 w-5" />,
+  },
+  {
+    label: "Settings",
+    href: "/settings",
+    icon: <Settings className="h-5 w-5" />,
+  },
+];
+
+function Sidebar({
+  collapsed = false,
+  onCollapsedChange,
+  user,
+  notifications = 0,
+  className,
+}: SidebarProps) {
   const pathname = usePathname();
-  const { sidebarOpen, toggleSidebar, alerts, notifications } = useAppStore();
-  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
-
-  const unreadAlerts = alerts.filter((a) => !a.acknowledged).length;
-  const unreadNotifications = notifications.filter((n) => !n.read).length;
-
-  const toggleExpand = (label: string) => {
-    setExpandedItems((prev) => ({ ...prev, [label]: !prev[label] }));
-  };
 
   const isActive = (href: string) => {
-    if (href === '/dashboard') return pathname === '/dashboard';
-    return pathname.startsWith(href);
+    return pathname === href || pathname.startsWith(href + "/");
   };
 
   return (
-    <aside
-      className={cn(
-        'fixed left-0 top-0 z-40 h-screen border-r bg-card transition-all duration-300',
-        sidebarOpen ? 'w-64' : 'w-16'
-      )}
-    >
-      <div className="flex h-full flex-col">
-        <div className="flex h-16 items-center justify-between border-b px-4">
-          {sidebarOpen && (
-            <div className="flex items-center gap-2">
-              <Activity className="h-6 w-6 text-primary" />
-              <span className="text-lg font-bold">IoT Hub</span>
+    <TooltipProvider delayDuration={0}>
+      <aside
+        className={cn(
+          "relative flex h-screen flex-col border-r bg-sidebar text-sidebar-foreground transition-all duration-300",
+          collapsed ? "w-[68px]" : "w-[260px]",
+          className
+        )}
+      >
+        <div className="flex h-14 items-center border-b px-4">
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-iot-teal text-white">
+              <Cpu className="h-4 w-4" />
             </div>
+            {!collapsed && (
+              <span className="text-lg font-semibold">IoT Dashboard</span>
+            )}
+          </div>
+          {onCollapsedChange && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => onCollapsedChange(!collapsed)}
+              className="ml-auto"
+            >
+              {collapsed ? (
+                <ChevronRight className="h-4 w-4" />
+              ) : (
+                <ChevronLeft className="h-4 w-4" />
+              )}
+            </Button>
           )}
-          {!sidebarOpen && <Activity className="h-6 w-6 mx-auto text-primary" />}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={toggleSidebar}
-            className={cn('h-8 w-8', !sidebarOpen && 'hidden')}
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
         </div>
 
-        <ScrollArea className="flex-1 py-2">
-          <nav className="space-y-1 px-2">
-            {navItems.map((item) => (
-              <div key={item.label}>
-                {item.children ? (
-                  <>
-                    <button
-                      onClick={() => toggleExpand(item.label)}
-                      className={cn(
-                        'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                        isActive(item.href)
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                      )}
-                    >
-                      <item.icon className="h-5 w-5 shrink-0" />
-                      {sidebarOpen && (
-                        <>
-                          <span className="flex-1 text-left">{item.label}</span>
-                          {item.badge && (
-                            <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-[10px] text-destructive-foreground">
-                              {item.badge}
-                            </span>
-                          )}
-                          <ChevronDown
-                            className={cn(
-                              'h-4 w-4 transition-transform',
-                              expandedItems[item.label] && 'rotate-180'
-                            )}
-                          />
-                        </>
-                      )}
-                    </button>
-                    {sidebarOpen && expandedItems[item.label] && (
-                      <div className="ml-4 mt-1 space-y-1">
-                        {item.children.map((child) => (
-                          <Link
-                            key={child.href}
-                            href={child.href}
-                            className={cn(
-                              'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
-                              pathname === child.href
-                                ? 'bg-primary/10 text-primary font-medium'
-                                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                            )}
-                          >
-                            <child.icon className="h-4 w-4" />
-                            <span>{child.label}</span>
-                          </Link>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                ) : (
+        <nav className="flex-1 space-y-1 p-2">
+          {defaultNavItems.map((item) => {
+            const active = isActive(item.href);
+            return (
+              <Tooltip key={item.href}>
+                <TooltipTrigger asChild>
                   <Link
                     href={item.href}
                     className={cn(
-                      'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                      isActive(item.href)
-                        ? 'bg-primary text-primary-foreground'
-                        : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                      active
+                        ? "bg-iot-teal/10 text-iot-teal"
+                        : "text-sidebar-foreground/60 hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground",
+                      collapsed && "justify-center px-2"
                     )}
                   >
-                    <item.icon className="h-5 w-5 shrink-0" />
-                    {sidebarOpen && (
+                    {item.icon}
+                    {!collapsed && (
                       <>
                         <span className="flex-1">{item.label}</span>
-                        {item.label === 'Alerts' && unreadAlerts > 0 && (
-                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-[10px] text-destructive-foreground">
-                            {unreadAlerts}
-                          </span>
-                        )}
-                        {item.label === 'Notifications' && unreadNotifications > 0 && (
-                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-[10px] text-destructive-foreground">
-                            {unreadNotifications}
-                          </span>
+                        {item.badge && (
+                          <Badge
+                            variant={item.badgeVariant || "default"}
+                            size="sm"
+                          >
+                            {item.badge}
+                          </Badge>
                         )}
                       </>
                     )}
+                    {collapsed && item.badge && (
+                      <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-iot-danger" />
+                    )}
                   </Link>
+                </TooltipTrigger>
+                {collapsed && (
+                  <TooltipContent side="right">{item.label}</TooltipContent>
                 )}
-              </div>
-            ))}
-          </nav>
-        </ScrollArea>
+              </Tooltip>
+            );
+          })}
+        </nav>
 
-        <div className="border-t p-4">
-          {!sidebarOpen ? (
-            <Button variant="ghost" size="icon" onClick={toggleSidebar} className="h-8 w-8 mx-auto">
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          ) : (
-            <div className="flex items-center gap-3">
-              <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                <span className="text-xs font-medium text-primary">JD</span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">John Doe</p>
-                <p className="text-xs text-muted-foreground truncate">john@example.com</p>
-              </div>
+        <Separator className="my-1" />
+
+        <nav className="space-y-1 p-2">
+          {bottomNavItems.map((item) => {
+            const active = isActive(item.href);
+            return (
+              <Tooltip key={item.href}>
+                <TooltipTrigger asChild>
+                  <Link
+                    href={item.href}
+                    className={cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                      active
+                        ? "bg-iot-teal/10 text-iot-teal"
+                        : "text-sidebar-foreground/60 hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground",
+                      collapsed && "justify-center px-2"
+                    )}
+                  >
+                    {item.icon}
+                    {!collapsed && <span>{item.label}</span>}
+                  </Link>
+                </TooltipTrigger>
+                {collapsed && (
+                  <TooltipContent side="right">{item.label}</TooltipContent>
+                )}
+              </Tooltip>
+            );
+          })}
+        </nav>
+
+        {user && (
+          <>
+            <Separator className="my-1" />
+            <div
+              className={cn(
+                "flex items-center gap-3 p-4",
+                collapsed && "justify-center px-2"
+              )}
+            >
+              <Avatar size="sm">
+                <AvatarImage src={user.avatar} alt={user.name} />
+                <AvatarFallback>
+                  {user.name
+                    .split(" ")
+                    .map((n) => n[0])
+                    .join("")}
+                </AvatarFallback>
+              </Avatar>
+              {!collapsed && (
+                <div className="flex-1 min-w-0">
+                  <p className="truncate text-sm font-medium">{user.name}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {user.email}
+                  </p>
+                </div>
+              )}
+              {!collapsed && (
+                <Button variant="ghost" size="icon-sm">
+                  <LogOut className="h-4 w-4" />
+                </Button>
+              )}
             </div>
-          )}
-        </div>
-      </div>
-    </aside>
+          </>
+        )}
+      </aside>
+    </TooltipProvider>
   );
 }
+
+interface MobileSidebarProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  children: React.ReactNode;
+}
+
+function MobileSidebar({
+  open,
+  onOpenChange,
+  children,
+}: MobileSidebarProps) {
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => onOpenChange(true)}
+        className="fixed left-4 top-3 z-50 rounded-md p-2 text-foreground hover:bg-accent md:hidden"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div
+            className="fixed inset-0 bg-black/50"
+            onClick={() => onOpenChange(false)}
+          />
+          <div className="fixed inset-y-0 left-0 w-[260px]">
+            <button
+              type="button"
+              onClick={() => onOpenChange(false)}
+              className="absolute right-4 top-4 rounded-md p-2 text-foreground hover:bg-accent"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            {children}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+export { Sidebar, MobileSidebar, defaultNavItems, bottomNavItems };
+export type { NavItem, SidebarProps, MobileSidebarProps };

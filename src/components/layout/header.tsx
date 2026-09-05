@@ -1,18 +1,12 @@
-'use client';
+"use client";
 
-import { usePathname } from 'next/navigation';
-import Link from 'next/link';
-import { useAppStore } from '@/store';
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import {
-  Bell,
-  Search,
-  Moon,
-  Sun,
-  Menu,
-  ChevronRight,
-} from 'lucide-react';
+import * as React from "react";
+import { Bell, Search, Moon, Sun, Menu, ChevronDown, User, Settings, LogOut } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,150 +14,166 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+} from "@/components/ui/dropdown";
 
-const breadcrumbMap: Record<string, string> = {
-  dashboard: 'Dashboard',
-  dashboards: 'Dashboards',
-  devices: 'Devices',
-  alerts: 'Alerts',
-  analytics: 'Analytics',
-  rules: 'Rules',
-  notifications: 'Notifications',
-  settings: 'Settings',
-  create: 'Create',
-  data: 'Data',
-  predictions: 'Predictions',
-};
+interface HeaderProps {
+  user?: {
+    name: string;
+    email: string;
+    avatar?: string;
+  };
+  notifications?: number;
+  onSearch?: (query: string) => void;
+  onNotificationClick?: () => void;
+  onThemeToggle?: () => void;
+  theme?: "light" | "dark";
+  onMenuClick?: () => void;
+  className?: string;
+}
 
-export function Header() {
-  const pathname = usePathname();
-  const { darkMode, setDarkMode, toggleSidebar, notifications, markNotificationRead, markAllNotificationsRead } = useAppStore();
-
-  const pathSegments = pathname.split('/').filter(Boolean);
-  const breadcrumbs = pathSegments.map((segment, index) => ({
-    label: breadcrumbMap[segment] || segment.charAt(0).toUpperCase() + segment.slice(1),
-    href: '/' + pathSegments.slice(0, index + 1).join('/'),
-    isLast: index === pathSegments.length - 1,
-  }));
-
-  const unreadNotifications = notifications.filter((n) => !n.read);
+function Header({
+  user,
+  notifications = 0,
+  onSearch,
+  onNotificationClick,
+  onThemeToggle,
+  theme = "light",
+  onMenuClick,
+  className,
+}: HeaderProps) {
+  const [searchQuery, setSearchQuery] = React.useState("");
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
-      <Button variant="ghost" size="icon" onClick={toggleSidebar} className="md:hidden">
+    <header
+      className={cn(
+        "flex h-14 items-center border-b bg-background px-4 lg:px-6",
+        className
+      )}
+    >
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={onMenuClick}
+        className="mr-4 md:hidden"
+      >
         <Menu className="h-5 w-5" />
       </Button>
 
-      <nav className="flex items-center gap-1 text-sm">
-        <Link href="/dashboard" className="text-muted-foreground hover:text-foreground transition-colors">
-          Home
-        </Link>
-        {breadcrumbs.map((crumb) => (
-          <div key={crumb.href} className="flex items-center gap-1">
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-            {crumb.isLast ? (
-              <span className="font-medium">{crumb.label}</span>
-            ) : (
-              <Link href={crumb.href} className="text-muted-foreground hover:text-foreground transition-colors">
-                {crumb.label}
-              </Link>
-            )}
-          </div>
-        ))}
-      </nav>
-
-      <div className="flex-1" />
+      <div className="flex-1">
+        <div className="relative max-w-md">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search devices, rules, alerts..."
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              onSearch?.(e.target.value);
+            }}
+            className="pl-10 h-9 bg-muted/50"
+          />
+        </div>
+      </div>
 
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" className="h-9 w-9">
-          <Search className="h-4 w-4" />
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onThemeToggle}
+          className="hidden sm:flex"
+        >
+          {theme === "dark" ? (
+            <Sun className="h-4 w-4" />
+          ) : (
+            <Moon className="h-4 w-4" />
+          )}
         </Button>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-9 w-9 relative">
-              <Bell className="h-4 w-4" />
-              {unreadNotifications.length > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] text-destruct-foreground">
-                  {unreadNotifications.length}
-                </span>
-              )}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-80">
-            <DropdownMenuLabel className="flex items-center justify-between">
-              <span>Notifications</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={markAllNotificationsRead}
-                className="text-xs h-7"
-              >
-                Mark all read
-              </Button>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {notifications.slice(0, 5).map((notification) => (
-              <DropdownMenuItem
-                key={notification.id}
-                onClick={() => markNotificationRead(notification.id)}
-                className={cn(
-                  'flex flex-col items-start gap-1 p-3',
-                  !notification.read && 'bg-primary/5'
-                )}
-              >
-                <div className="flex w-full items-center justify-between">
-                  <span className="font-medium text-sm">{notification.title}</span>
-                  {!notification.read && (
-                    <span className="h-2 w-2 rounded-full bg-primary" />
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground">{notification.message}</p>
-                <p className="text-xs text-muted-foreground">
-                  {new Date(notification.timestamp).toLocaleString()}
-                </p>
-              </DropdownMenuItem>
-            ))}
-            {notifications.length === 0 && (
-              <div className="p-4 text-center text-sm text-muted-foreground">
-                No notifications
-              </div>
-            )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem asChild className="justify-center">
-              <Link href="/dashboard/notifications">View all notifications</Link>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
 
         <Button
           variant="ghost"
-          size="icon"
-          onClick={() => setDarkMode(!darkMode)}
-          className="h-9 w-9"
+          size="icon-sm"
+          onClick={onNotificationClick}
+          className="relative"
         >
-          {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          <Bell className="h-4 w-4" />
+          {notifications > 0 && (
+            <Badge
+              variant="destructive"
+              size="sm"
+              className="absolute -right-1 -top-1 h-4 min-w-[16px] justify-center rounded-full px-1 text-[10px]"
+            >
+              {notifications > 99 ? "99+" : notifications}
+            </Badge>
+          )}
         </Button>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-9 w-9">
-              <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center">
-                <span className="text-xs font-medium text-primary">JD</span>
-              </div>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuLabel>My Account</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem>Profile</DropdownMenuItem>
-            <DropdownMenuItem>Settings</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem>Logout</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {user && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                className="hidden gap-2 sm:flex"
+              >
+                <Avatar size="sm">
+                  <AvatarImage src={user.avatar} alt={user.name} />
+                  <AvatarFallback>
+                    {user.name
+                      .split(" ")
+                      .map((n) => n[0])
+                      .join("")}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="hidden lg:inline-flex">{user.name}</span>
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>
+                <div className="flex flex-col">
+                  <span>{user.name}</span>
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {user.email}
+                  </span>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem>
+                <User className="mr-2 h-4 w-4" />
+                Profile
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <Settings className="mr-2 h-4 w-4" />
+                Settings
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-destructive">
+                <LogOut className="mr-2 h-4 w-4" />
+                Log out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
     </header>
   );
 }
+
+interface CommandHeaderProps {
+  onCommandOpen?: () => void;
+}
+
+function CommandHeader({ onCommandOpen }: CommandHeaderProps) {
+  return (
+    <button
+      onClick={onCommandOpen}
+      className="flex h-9 w-full items-center gap-2 rounded-md border bg-muted/50 px-3 text-sm text-muted-foreground transition-colors hover:bg-muted"
+    >
+      <Search className="h-4 w-4" />
+      <span className="flex-1 text-left">Search...</span>
+      <kbd className="pointer-events-none hidden h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium sm:flex">
+        <span className="text-xs">⌘</span>K
+      </kbd>
+    </button>
+  );
+}
+
+export { Header, CommandHeader };

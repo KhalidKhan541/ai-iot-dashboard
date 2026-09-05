@@ -318,7 +318,7 @@ export class DataSourceService {
     context: QueryContext = {}
   ): Promise<QueryResult> {
     const source = sources.get(sourceId);
-    if (!source) throw new already existssource not found: ${sourceId}`);
+    if (!source) throw new Error(`Data source not found: ${sourceId}`);
 
     const cacheKey = this.buildCacheKey(sourceId, context);
 
