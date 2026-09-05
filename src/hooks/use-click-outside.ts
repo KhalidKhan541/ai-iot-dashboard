@@ -1,77 +1,96 @@
 "use client";
 
-import { useEffect, useRef, RefObject } from "react";
+import { useEffect, useRef, useCallback } from "react";
 
 export function useClickOutside<T extends HTMLElement = HTMLElement>(
-  handler: (event: MouseEvent | TouchEvent) => void,
+  handler: () => void,
   options?: {
     enabled?: boolean;
-    ignoreClass?: string;
+    ignoreClicksOn?: string[];
   }
-): RefObject<T> {
+): React.RefObject<T> {
   const ref = useRef<T>(null);
-  const enabled = options?.enabled ?? true;
-  const ignoreClass = options?.ignoreClass;
+  const handlerRef = useRef(handler);
+  handlerRef.current = handler;
 
   useEffect(() => {
-    if (!enabled) return;
+    if (options?.enabled === false) return;
 
-    const listener = (event: MouseEvent | TouchEvent) => {
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      if (!ref.current) return;
+
       const target = event.target as Node;
-      if (!ref.current || ref.current.contains(target)) {
-        return;
+
+      if (ref.current.contains(target)) return;
+
+      if (options?.ignoreClicksOn) {
+        for (const selector of options.ignoreClicksOn) {
+          const ignoredElement = (target as Element)?.closest?.(selector);
+          if (ignoredElement) return;
+        }
       }
-      if (ignoreClass && target instanceof Element && target.closest(ignoreClass)) {
-        return;
-      }
-      handler(event);
+
+      handlerRef.current();
     };
 
-    document.addEventListener("mousedown", listener);
-    document.addEventListener("touchstart", listener);
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
 
     return () => {
-      document.removeEventListener("mousedown", listener);
-      document.removeEventListener("touchstart", listener);
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
     };
-  }, [handler, enabled, ignoreClass]);
+  }, [options?.enabled, options?.ignoreClicksOn]);
 
   return ref;
 }
 
-export function useClickOutsideMultiple<T extends HTMLElement = HTMLElement>(
-  handler: (event: MouseEvent | TouchEvent) => void,
-  enabled?: boolean
-): RefObject<T>[] {
-  const refs = useRef<RefObject<T>[]>([]);
-
-  const addRef = () => {
-    const ref = { current: null as T | null };
-    refs.current.push(ref);
-    return ref;
-  };
+export function useClickOutsideMultiple(
+  handler: () => void,
+  refs: React.RefObject<HTMLElement>[],
+  options?: { enabled?: boolean }
+): void {
+  const handlerRef = useRef(handler);
+  handlerRef.current = handler;
 
   useEffect(() => {
-    if (enabled === false) return;
+    if (options?.enabled === false) return;
 
-    const listener = (event: MouseEvent | TouchEvent) => {
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
       const target = event.target as Node;
-      const isInside = refs.current.some(
-        (ref) => ref.current && ref.current.contains(target)
-      );
-      if (!isInside) {
-        handler(event);
+
+      for (const ref of refs) {
+        if (ref.current?.contains(target)) return;
+      }
+
+      handlerRef.current();
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [refs, options?.enabled]);
+}
+
+export function useOutsideClickAlert(ref: React.RefObject<HTMLElement | null>): boolean {
+  const isOutside = useRef(true);
+
+  useEffect(() => {
+    const handleMouseDown = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        isOutside.current = true;
+      } else {
+        isOutside.current = false;
       }
     };
 
-    document.addEventListener("mousedown", listener);
-    document.addEventListener("touchstart", listener);
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [ref]);
 
-    return () => {
-      document.removeEventListener("mousedown", listener);
-      document.removeEventListener("touchstart", listener);
-    };
-  }, [handler, enabled]);
-
-  return refs.current;
+  return isOutside.current;
 }
