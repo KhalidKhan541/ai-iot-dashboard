@@ -1,15 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 export function useLocalStorage<T>(
   key: string,
   initialValue: T
-): [T, (value: T | ((val: T) => T)) => void, () => void] {
+): [T, (value: T | ((prev: T) => T)) => void, () => void] {
   const [storedValue, setStoredValue] = useState<T>(() => {
-    if (typeof window === "undefined") {
-      return initialValue;
-    }
+    if (typeof window === "undefined") return initialValue;
+
     try {
       const item = window.localStorage.getItem(key);
       return item ? (JSON.parse(item) as T) : initialValue;
@@ -20,14 +19,14 @@ export function useLocalStorage<T>(
   });
 
   const setValue = useCallback(
-    (value: T | ((val: T) => T)) => {
+    (value: T | ((prev: T) => T)) => {
       try {
-        const valueToStore =
-          value instanceof Function ? value(storedValue) : value;
+        const valueToStore = value instanceof Function ? value(storedValue) : value;
         setStoredValue(valueToStore);
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(key, JSON.stringify(valueToStore));
-        }
+        window.localStorage.setItem(key, JSON.stringify(valueToStore));
+        window.dispatchEvent(
+          new CustomEvent("local-storage", { detail: { key, value: valueToStore } })
+        );
       } catch (error) {
         console.error(`Error setting localStorage key "${key}":`, error);
       }
@@ -37,27 +36,27 @@ export function useLocalStorage<T>(
 
   const removeValue = useCallback(() => {
     try {
+      window.localStorage.removeItem(key);
       setStoredValue(initialValue);
-      if (typeof window !== "undefined") {
-        window.localStorage.removeItem(key);
-      }
+      window.dispatchEvent(
+        new CustomEvent("local-storage", { detail: { key, value: initialValue } })
+      );
     } catch (error) {
       console.error(`Error removing localStorage key "${key}":`, error);
     }
   }, [key, initialValue]);
 
   useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === key && e.newValue) {
-        try {
-          setStoredValue(JSON.parse(e.newValue) as T);
-        } catch {
-          // ignore
-        }
+    const handleStorageChange = (e: CustomEvent) => {
+      if (e.detail.key === key) {
+        setStoredValue(e.detail.value);
       }
     };
-    window.addEventListener("storage", handleStorageChange);
-    return () => window.removeEventListener("storage", handleStorageChange);
+
+    window.addEventListener("local-storage", handleStorageChange as EventListener);
+    return () => {
+      window.removeEventListener("local-storage", handleStorageChange as EventListener);
+    };
   }, [key]);
 
   return [storedValue, setValue, removeValue];
@@ -66,11 +65,10 @@ export function useLocalStorage<T>(
 export function useSessionStorage<T>(
   key: string,
   initialValue: T
-): [T, (value: T | ((val: T) => T)) => void, () => void] {
+): [T, (value: T | ((prev: T) => T)) => void, () => void] {
   const [storedValue, setStoredValue] = useState<T>(() => {
-    if (typeof window === "undefined") {
-      return initialValue;
-    }
+    if (typeof window === "undefined") return initialValue;
+
     try {
       const item = window.sessionStorage.getItem(key);
       return item ? (JSON.parse(item) as T) : initialValue;
@@ -81,14 +79,11 @@ export function useSessionStorage<T>(
   });
 
   const setValue = useCallback(
-    (value: T | ((val: T) => T)) => {
+    (value: T | ((prev: T) => T)) => {
       try {
-        const valueToStore =
-          value instanceof Function ? value(storedValue) : value;
+        const valueToStore = value instanceof Function ? value(storedValue) : value;
         setStoredValue(valueToStore);
-        if (typeof window !== "undefined") {
-          window.sessionStorage.setItem(key, JSON.stringify(valueToStore));
-        }
+        window.sessionStorage.setItem(key, JSON.stringify(valueToStore));
       } catch (error) {
         console.error(`Error setting sessionStorage key "${key}":`, error);
       }
@@ -98,10 +93,8 @@ export function useSessionStorage<T>(
 
   const removeValue = useCallback(() => {
     try {
+      window.sessionStorage.removeItem(key);
       setStoredValue(initialValue);
-      if (typeof window !== "undefined") {
-        window.sessionStorage.removeItem(key);
-      }
     } catch (error) {
       console.error(`Error removing sessionStorage key "${key}":`, error);
     }
