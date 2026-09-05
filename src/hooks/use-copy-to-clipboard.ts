@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 
 interface UseCopyToClipboardResult {
   copiedText: string | null;
@@ -9,46 +9,60 @@ interface UseCopyToClipboardResult {
   reset: () => void;
 }
 
-export function useCopyToClipboard(): UseCopyToClipboardResult {
+export function useCopyToClipboard(options?: {
+  timeout?: number;
+  onSuccess?: (text: string) => void;
+  onError?: (error: Error) => void;
+}): UseCopyToClipboardResult {
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const [isCopied, setIsCopied] = useState(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { timeout = 2000, onSuccess, onError } = options ?? {};
 
-  const copy = useCallback(async (text: string): Promise<boolean> => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedText(text);
-      setIsCopied(true);
-      setTimeout(() => {
-        setIsCopied(false);
-        setCopiedText(null);
-      }, 2000);
-      return true;
-    } catch (error) {
-      // Fallback for older browsers
+  const copy = useCallback(
+    async (text: string): Promise<boolean> => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+
       try {
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          textarea.style.position = "fixed";
+          textarea.style.left = "-9999px";
+          textarea.style.top = "-9999px";
+          document.body.appendChild(textarea);
+          textarea.focus();
+          textarea.select();
+          document.execCommand("copy");
+          document.body.removeChild(textarea);
+        }
+
         setCopiedText(text);
         setIsCopied(true);
-        setTimeout(() => {
+        onSuccess?.(text);
+
+        timeoutRef.current = setTimeout(() => {
           setIsCopied(false);
-          setCopiedText(null);
-        }, 2000);
+        }, timeout);
+
         return true;
-      } catch {
-        console.error("Failed to copy:", error);
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error("Failed to copy");
+        onError?.(err);
         return false;
       }
-    }
-  }, []);
+    },
+    [timeout, onSuccess, onError]
+  );
 
   const reset = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
     setCopiedText(null);
     setIsCopied(false);
   }, []);

@@ -1,131 +1,188 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 
 interface UsePaginationOptions {
-  totalItems: number;
-  itemsPerPage: number;
   initialPage?: number;
-  siblingCount?: number;
+  initialPageSize?: number;
+  totalItems: number;
+  siblingsCount?: number;
 }
 
 interface UsePaginationResult {
-  currentPage: number;
+  page: number;
+  pageSize: number;
   totalPages: number;
-  itemsPerPage: number;
   totalItems: number;
   startIndex: number;
   endIndex: number;
-  pages: (number | "dots")[];
-  goToPage: (page: number) => void;
+  isFirstPage: boolean;
+  isLastPage: boolean;
+  hasPreviousPage: boolean;
+  hasNextPage: boolean;
+  pages: number[];
+  setPage: (page: number) => void;
+  setPageSize: (size: number) => void;
   nextPage: () => void;
-  prevPage: () => void;
+  previousPage: () => void;
   firstPage: () => void;
   lastPage: () => void;
-  goToNext: boolean;
-  goToPrev: boolean;
+  goToPage: (page: number) => void;
 }
 
-export function usePagination({
-  totalItems,
-  itemsPerPage,
-  initialPage = 1,
-  siblingCount = 1,
-}: UsePaginationOptions): UsePaginationResult {
-  const [currentPage, setCurrentPage] = useState(initialPage);
+export function usePagination(options: UsePaginationOptions): UsePaginationResult {
+  const {
+    initialPage = 1,
+    initialPageSize = 10,
+    totalItems,
+    siblingsCount = 1,
+  } = options;
+
+  const [page, setPage] = useState(initialPage);
+  const [pageSize, setPageSizeState] = useState(initialPageSize);
 
   const totalPages = useMemo(
-    () => Math.ceil(totalItems / itemsPerPage),
-    [totalItems, itemsPerPage]
+    () => Math.max(1, Math.ceil(totalItems / pageSize)),
+    [totalItems, pageSize]
+  );
+
+  const clampedPage = useMemo(
+    () => Math.min(Math.max(1, page), totalPages),
+    [page, totalPages]
   );
 
   const startIndex = useMemo(
-    () => (currentPage - 1) * itemsPerPage,
-    [currentPage, itemsPerPage]
+    () => (clampedPage - 1) * pageSize,
+    [clampedPage, pageSize]
   );
 
   const endIndex = useMemo(
-    () => Math.min(startIndex + itemsPerPage - 1, totalItems - 1),
-    [startIndex, itemsPerPage, totalItems]
+    () => Math.min(startIndex + pageSize - 1, totalItems - 1),
+    [startIndex, pageSize, totalItems]
   );
 
+  const isFirstPage = clampedPage === 1;
+  const isLastPage = clampedPage === totalPages;
+  const hasPreviousPage = clampedPage > 1;
+  const hasNextPage = clampedPage < totalPages;
+
   const pages = useMemo(() => {
-    const totalPageNumbers = siblingCount + 5;
+    const range = [];
+    const left = Math.max(2, clampedPage - siblingsCount);
+    const right = Math.min(totalPages - 1, clampedPage + siblingsCount);
 
-    if (totalPages <= totalPageNumbers) {
-      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    range.push(1);
+
+    if (left > 2) {
+      range.push(-1);
     }
 
-    const leftSiblingIndex = Math.max(currentPage - siblingCount, 1);
-    const rightSiblingIndex = Math.min(currentPage + siblingCount, totalPages);
-
-    const shouldShowLeftDots = leftSiblingIndex > 2;
-    const shouldShowRightDots = rightSiblingIndex < totalPages - 1;
-
-    if (!shouldShowLeftDots && shouldShowRightDots) {
-      const leftItemCount = 3 + 2 * siblingCount;
-      const leftRange = Array.from({ length: leftItemCount }, (_, i) => i + 1);
-      return [...leftRange, "dots", totalPages];
+    for (let i = left; i <= right; i++) {
+      range.push(i);
     }
 
-    if (shouldShowLeftDots && !shouldShowRightDots) {
-      const rightItemCount = 3 + 2 * siblingCount;
-      const rightRange = Array.from(
-        { length: rightItemCount },
-        (_, i) => totalPages - rightItemCount + i + 1
-      );
-      return [1, "dots", ...rightRange];
+    if (right < totalPages - 1) {
+      range.push(-2);
     }
 
-    if (shouldShowLeftDots && shouldShowRightDots) {
-      const middleRange = Array.from(
-        { length: rightSiblingIndex - leftSiblingIndex + 1 },
-        (_, i) => leftSiblingIndex + i
-      );
-      return [1, "dots", ...middleRange, "dots", totalPages];
+    if (totalPages > 1) {
+      range.push(totalPages);
     }
 
-    return [];
-  }, [currentPage, totalPages, siblingCount]);
+    return range;
+  }, [clampedPage, totalPages, siblingsCount]);
+
+  const setPageSize = useCallback((size: number) => {
+    setPageSizeState(size);
+    setPage(1);
+  }, []);
+
+  const nextPage = useCallback(() => {
+    setPage((p) => Math.min(p + 1, totalPages));
+  }, [totalPages]);
+
+  const previousPage = useCallback(() => {
+    setPage((p) => Math.max(p - 1, 1));
+  }, []);
+
+  const firstPage = useCallback(() => setPage(1), []);
+
+  const lastPage = useCallback(() => setPage(totalPages), [totalPages]);
 
   const goToPage = useCallback(
-    (page: number) => {
-      const newPage = Math.max(1, Math.min(page, totalPages));
-      setCurrentPage(newPage);
+    (p: number) => {
+      setPage(Math.min(Math.max(1, p), totalPages));
     },
     [totalPages]
   );
 
-  const nextPage = useCallback(() => {
-    goToPage(currentPage + 1);
-  }, [currentPage, goToPage]);
-
-  const prevPage = useCallback(() => {
-    goToPage(currentPage - 1);
-  }, [currentPage, goToPage]);
-
-  const firstPage = useCallback(() => {
-    goToPage(1);
-  }, [goToPage]);
-
-  const lastPage = useCallback(() => {
-    goToPage(totalPages);
-  }, [totalPages, goToPage]);
-
   return {
-    currentPage,
+    page: clampedPage,
+    pageSize,
     totalPages,
-    itemsPerPage,
     totalItems,
     startIndex,
     endIndex,
+    isFirstPage,
+    isLastPage,
+    hasPreviousPage,
+    hasNextPage,
     pages,
-    goToPage,
+    setPage,
+    setPageSize,
     nextPage,
-    prevPage,
+    previousPage,
     firstPage,
     lastPage,
-    goToNext: currentPage < totalPages,
-    goToPrev: currentPage > 1,
+    goToPage,
+  };
+}
+
+export function useCursorPagination<T>(
+  items: T[],
+  pageSize: number = 10
+): {
+  currentItems: T[];
+  cursor: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+  next: () => void;
+  previous: () => void;
+  goTo: (index: number) => void;
+  reset: () => void;
+} {
+  const [cursor, setCursor] = useState(0);
+
+  const hasNext = cursor + pageSize < items.length;
+  const hasPrevious = cursor > 0;
+
+  const currentItems = items.slice(cursor, cursor + pageSize);
+
+  const next = useCallback(() => {
+    setCursor((c) => Math.min(c + pageSize, items.length));
+  }, [pageSize, items.length]);
+
+  const previous = useCallback(() => {
+    setCursor((c) => Math.max(c - pageSize, 0));
+  }, [pageSize]);
+
+  const goTo = useCallback(
+    (index: number) => {
+      setCursor(Math.min(Math.max(0, index), items.length));
+    },
+    [items.length]
+  );
+
+  const reset = useCallback(() => setCursor(0), []);
+
+  return {
+    currentItems,
+    cursor,
+    hasNext,
+    hasPrevious,
+    next,
+    previous,
+    goTo,
+    reset,
   };
 }

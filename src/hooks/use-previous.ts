@@ -12,26 +12,41 @@ export function usePrevious<T>(value: T): T | undefined {
   return ref.current;
 }
 
-export function usePreviousDistinct<T>(
-  value: T,
-  equalityFn?: (prev: T, next: T) => boolean
-): T | undefined {
+export function usePreviousDistinct<T>(value: T): T | undefined {
   const ref = useRef<T | undefined>(undefined);
-  const currentRef = useRef<T>(value);
+  const prevValue = useRef<T | undefined>(undefined);
 
   useEffect(() => {
-    if (equalityFn) {
-      if (!equalityFn(currentRef.current, value)) {
-        ref.current = currentRef.current;
-        currentRef.current = value;
-      }
-    } else {
-      if (currentRef.current !== value) {
-        ref.current = currentRef.current;
-        currentRef.current = value;
-      }
+    if (ref.current !== value) {
+      prevValue.current = ref.current;
+      ref.current = value;
     }
-  }, [value, equalityFn]);
+  }, [value]);
+
+  return prevValue.current;
+}
+
+export function usePreviousArray<T>(value: T[], maxHistory: number = 5): T[][] {
+  const ref = useRef<T[][]>([]);
+
+  useEffect(() => {
+    ref.current = [value, ...ref.current].slice(0, maxHistory);
+  }, [value, maxHistory]);
+
+  return ref.current;
+}
+
+export function usePreviousWithTimestamp<T>(
+  value: T
+): { value: T | undefined; timestamp: number | undefined } {
+  const ref = useRef<{ value: T | undefined; timestamp: number | undefined }>({
+    value: undefined,
+    timestamp: undefined,
+  });
+
+  useEffect(() => {
+    ref.current = { value, timestamp: Date.now() };
+  }, [value]);
 
   return ref.current;
 }
