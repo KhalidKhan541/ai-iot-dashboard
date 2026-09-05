@@ -1,0 +1,791 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch", "multiSchema"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DATABASE_DIRECT_URL")
+  schemas    = ["public", "analytics"]
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  SUPER_ADMIN
+  ORG_ADMIN
+  ORG_MEMBER
+  DEVICE_MANAGER
+  VIEWER
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  IDLE
+  ERROR
+  MAINTENANCE
+  PROVISIONING
+  DECOMMISSIONED
+}
+
+enum AlertSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum DataType {
+  TEMPERATURE
+  HUMIDITY
+  PRESSURE
+  VOLTAGE
+  CURRENT
+  POWER
+  GPS
+  ACCELEROMETER
+  GYROSCOPE
+  TEXT
+  BOOLEAN
+  INTEGER
+  FLOAT
+  JSON
+  BINARY
+}
+
+enum AggregationType {
+  AVG
+  SUM
+  MIN
+  MAX
+  COUNT
+  PERCENTILE_50
+  PERCENTILE_90
+  PERCENTILE_95
+  PERCENTILE_99
+  RATE
+  STDDEV
+}
+
+enum WidgetType {
+  LINE_CHART
+  BAR_CHART
+  PIE_CHART
+  GAUGE
+  SINGLE_VALUE
+  TABLE
+  MAP
+  HEATMAP
+  SCATTER_PLOT
+  AREA_CHART
+  RADAR
+  FUNNEL
+  ALERTS_LIST
+  DEVICE_STATUS
+  SPARKLINE
+  PROGRESS_BAR
+  TEXT_CARD
+  IMAGE
+  CUSTOM
+}
+
+enum RuleAction {
+  SEND_NOTIFICATION
+  CALL_WEBHOOK
+  UPDATE_DEVICE
+  CREATE_TICKET
+  EXECUTE_LAMBDA
+  TRIGGER_SNS
+  LOG_EVENT
+  SET_VALUE
+}
+
+enum IntegrationType {
+  AWS_IOT
+  MQTT
+  REST_API
+  WEBHOOK
+  GRAFANA
+  PROMETHEUS
+  INFLUXDB
+  DATADOG
+  PAGERDUTY
+  SLACK
+}
+
+enum ReportFormat {
+  PDF
+  CSV
+  JSON
+  HTML
+  XLSX
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WEBHOOK
+  SLACK
+  PUSH
+  IN_APP
+}
+
+enum MetricType {
+  DEVICE_DATA
+  SYSTEM
+  BUSINESS
+  CUSTOM
+}
+
+enum DataSource {
+  DEVICE_TELEMETRY
+  SIMULATED
+  EXTERNAL_API
+  MANUAL
+}
+
+// ─── Auth Models ──────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  password      String?
+  role          UserRole  @default(ORG_MEMBER)
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts            Account[]
+  sessions            Session[]
+  ownedOrganizations  Organization[]    @relation("OrgOwner")
+  memberships         OrgMember[]
+  createdDevices      Device[]          @relation("DeviceCreator")
+  assignedDevices     Device[]          @relation("DeviceAssignee")
+  dashboards          Dashboard[]
+  auditLogs           AuditLog[]
+  notifications       Notification[]
+  preferences         NotificationPreference[]
+  subscriptions       Subscription[]
+  scheduledReports    ScheduledReport[]
+  apiKeys             ApiKey[]
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model ApiKey {
+  id        String   @id @default(cuid())
+  userId    String
+  key       String   @unique
+  name      String
+  expiresAt DateTime?
+  lastUsedAt DateTime?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([key])
+  @@map("api_keys")
+}
+
+// ─── Organization Models ─────────────────────────────────────────────────────
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  logo        String?
+  website     String?
+  plan        String   @default("free")
+  ownerId     String
+  settings    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner       User           @relation("OrgOwner", fields: [ownerId], references: [id])
+  members     OrgMember[]
+  devices     Device[]
+  dashboards  Dashboard[]
+  alertRules  AlertRule[]
+  integrations Integration[]
+  auditLogs   AuditLog[]
+
+  @@index([slug])
+  @@index([ownerId])
+  @@map("organizations")
+}
+
+model OrgMember {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           UserRole @default(ORG_MEMBER)
+  joinedAt       DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@map("org_members")
+}
+
+// ─── Device Models ────────────────────────────────────────────────────────────
+
+model DeviceType {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  category    String?
+  manufacturer String?
+  model       String?
+  protocol    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  devices Device[]
+
+  @@map("device_types")
+}
+
+model DeviceTag {
+  id    String @id @default(cuid())
+  name  String @unique
+  color String?
+
+  devices DeviceDeviceTag[]
+  groups  DeviceGroup[]
+  rules   Rule[]
+
+  @@map("device_tags")
+}
+
+model DeviceGroup {
+  id              String   @id @default(cuid())
+  organizationId  String
+  name            String
+  description     String?
+  parentId        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent       DeviceGroup?  @relation("GroupHierarchy", fields: [parentId], references: [id])
+  children     DeviceGroup[] @relation("GroupHierarchy")
+  devices      Device[]
+  tags         DeviceTag[]
+  dashboards   Dashboard[]
+
+  @@unique([organizationId, name])
+  @@map("device_groups")
+}
+
+model Device {
+  id              String       @id @default(cuid())
+  organizationId  String
+  deviceTypeId    String?
+  creatorId       String?
+  assigneeId      String?
+  name            String
+  description     String?
+  serialNumber    String?
+  firmwareVersion String?
+  location        String?
+  latitude        Float?
+  longitude       Float?
+  status          DeviceStatus @default(OFFLINE)
+  lastSeenAt      DateTime?
+  config          Json?
+  metadata        Json?
+  isActive        Boolean      @default(true)
+  provisionedAt   DateTime?
+  decommissionedAt DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deviceType    DeviceType?   @relation(fields: [deviceTypeId], references: [id])
+  creator       User?         @relation("DeviceCreator", fields: [creatorId], references: [id])
+  assignee      User?         @relation("DeviceAssignee", fields: [assigneeId], references: [id])
+  group         DeviceGroup?  @relation(fields: [parentId], references: [id])
+  parentId      String?
+  dataPoints    DeviceData[]
+  tags          DeviceDeviceTag[]
+  alerts        Alert[]
+  metrics       Metric[]
+  rules         Rule[]
+
+  @@unique([organizationId, serialNumber])
+  @@index([organizationId, status])
+  @@index([status])
+  @@map("devices")
+}
+
+model DeviceDeviceTag {
+  deviceId  String
+  tagId     String
+  createdAt DateTime @default(now())
+
+  device Device  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  tag    DeviceTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([deviceId, tagId])
+  @@map("device_tags_relations")
+}
+
+// ─── Data Models ──────────────────────────────────────────────────────────────
+
+model DeviceData {
+  id         String   @id @default(cuid())
+  deviceId   String
+  dataType   DataType
+  source     DataSource @default(DEVICE_TELEMETRY)
+  timestamp  DateTime @default(now())
+  batchId    String?
+  createdAt  DateTime @default(now())
+
+  device       Device        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  dataPoints   DeviceDataPoint[]
+
+  @@index([deviceId, timestamp])
+  @@index([deviceId, dataType])
+  @@index([timestamp])
+  @@map("device_data")
+}
+
+model DeviceDataPoint {
+  id          String   @id @default(cuid())
+  deviceDataId String
+  key         String
+  value       Json
+  unit        String?
+  quality     Int?     @default(100)
+  createdAt   DateTime @default(now())
+
+  deviceData DeviceData @relation(fields: [deviceDataId], references: [id], onDelete: Cascade)
+
+  @@index([deviceDataId])
+  @@index([key])
+  @@map("device_data_points")
+}
+
+model Metric {
+  id              String        @id @default(cuid())
+  deviceId        String
+  name            String
+  displayName     String?
+  description     String?
+  dataType        DataType
+  metricType      MetricType    @default(DEVICE_DATA)
+  unit            String?
+  source          DataSource    @default(DEVICE_TELEMETRY)
+  config          Json?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  device        Device                @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  aggregations  MetricAggregation[]
+  dashboardWidgets DashboardWidget[]
+
+  @@unique([deviceId, name])
+  @@map("metrics")
+}
+
+model MetricAggregation {
+  id              String          @id @default(cuid())
+  metricId        String
+  aggregationType AggregationType
+  intervalMinutes Int
+  value           Float
+  startTime       DateTime
+  endTime         DateTime
+  sampleCount     Int?
+  min             Float?
+  max             Float?
+  stddev          Float?
+  createdAt       DateTime        @default(now())
+
+  metric Metric @relation(fields: [metricId], references: [id], onDelete: Cascade)
+
+  @@unique([metricId, aggregationType, startTime])
+  @@index([metricId, startTime])
+  @@map("metric_aggregations")
+}
+
+// ─── Alert Models ─────────────────────────────────────────────────────────────
+
+model Alert {
+  id          String        @id @default(cuid())
+  deviceId    String
+  ruleId      String?
+  severity    AlertSeverity @default(MEDIUM)
+  title       String
+  description String?
+  value       Json?
+  threshold   Json?
+  isRead      Boolean       @default(false)
+  isAcknowledged Boolean   @default(false)
+  acknowledgedAt  DateTime?
+  acknowledgedById String?
+  resolvedAt  DateTime?
+  resolvedById String?
+  status      String        @default("active")
+  metadata    Json?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  device Device  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  rule   Rule?   @relation(fields: [ruleId], references: [id])
+  alertHistory AlertHistory[]
+
+  @@index([deviceId, severity])
+  @@index([severity, isRead])
+  @@index([createdAt])
+  @@map("alerts")
+}
+
+model AlertHistory {
+  id        String   @id @default(cuid())
+  alertId   String
+  action    String
+  message   String?
+  performedById String?
+  createdAt DateTime @default(now())
+
+  alert Alert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@index([alertId])
+  @@map("alert_history")
+}
+
+// ─── Dashboard Models ─────────────────────────────────────────────────────────
+
+model Dashboard {
+  id              String   @id @default(cuid())
+  organizationId  String
+  deviceGroupId   String?
+  ownerId         String
+  name            String
+  description     String?
+  isPublic        Boolean  @default(false)
+  isDefault       Boolean  @default(false)
+  layout          Json?
+  refreshInterval Int      @default(30)
+  timeRange       String   @default("last24h")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deviceGroup  DeviceGroup?   @relation(fields: [deviceGroupId], references: [id])
+  owner        User           @relation(fields: [ownerId], references: [id])
+  widgets      DashboardWidget[]
+  templates    ReportTemplate[]
+
+  @@map("dashboards")
+}
+
+model DashboardWidget {
+  id          String     @id @default(cuid())
+  dashboardId String
+  metricId    String?
+  title       String
+  widgetType  WidgetType
+  position    Json
+  config      Json
+  query       Json?
+  refreshInterval Int?
+  isVisible   Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  dashboard Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  metric    Metric?   @relation(fields: [metricId], references: [id])
+  widgetConfig WidgetConfig?
+
+  @@map("dashboard_widgets")
+}
+
+model WidgetConfig {
+  id            String  @id @default(cuid())
+  widgetId      String  @unique
+  dataSource    Json?
+  displayConfig Json?
+  thresholds    Json?
+  colors        Json?
+  formatters    Json?
+  interactions  Json?
+
+  widget DashboardWidget @relation(fields: [widgetId], references: [id], onDelete: Cascade)
+
+  @@map("widget_configs")
+}
+
+// ─── Rule Models ──────────────────────────────────────────────────────────────
+
+model Rule {
+  id              String   @id @default(cuid())
+  organizationId  String?
+  name            String
+  description     String?
+  isActive        Boolean  @default(true)
+  priority        Int      @default(0)
+  cooldownMinutes Int      @default(5)
+  config          Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  conditions   RuleCondition[]
+  actions      RuleAction[]
+  devices      Device[]
+  alerts       Alert[]
+
+  @@map("rules")
+}
+
+model RuleCondition {
+  id       String @id @default(cuid())
+  ruleId   String
+  field    String
+  operator String
+  value    Json
+  logicalOp String?
+
+  rule Rule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@map("rule_conditions")
+}
+
+model RuleAction {
+  id       String     @id @default(cuid())
+  ruleId   String
+  type     RuleAction
+  config   Json?
+  order    Int        @default(0)
+
+  rule Rule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@map("rule_actions")
+}
+
+// ─── Notification Models ──────────────────────────────────────────────────────
+
+model Notification {
+  id         String             @id @default(cuid())
+  userId     String
+  title      String
+  message    String
+  type       NotificationChannel
+  isRead     Boolean            @default(false)
+  readAt     DateTime?
+  metadata   Json?
+  createdAt  DateTime           @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id       String             @id @default(cuid())
+  userId   String
+  channel  NotificationChannel
+  type     String
+  enabled  Boolean            @default(true)
+  config   Json?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, channel, type])
+  @@map("notification_preferences")
+}
+
+// ─── Integration Models ───────────────────────────────────────────────────────
+
+model Integration {
+  id              String          @id @default(cuid())
+  organizationId  String
+  type            IntegrationType
+  name            String
+  description     String?
+  isActive        Boolean         @default(true)
+  config          Json?
+  credentials     Json?
+  lastSyncAt      DateTime?
+  syncStatus      String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  configs      IntegrationConfig[]
+  reports      ScheduledReport[]
+
+  @@map("integrations")
+}
+
+model IntegrationConfig {
+  id            String  @id @default(cuid())
+  integrationId String
+  key           String
+  value         String
+  isSecret      Boolean @default(false)
+  description   String?
+
+  integration Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@unique([integrationId, key])
+  @@map("integration_configs")
+}
+
+// ─── Report Models ────────────────────────────────────────────────────────────
+
+model ScheduledReport {
+  id              String     @id @default(cuid())
+  organizationId  String
+  integrationId   String?
+  ownerId         String
+  name            String
+  description     String?
+  schedule        String
+  format          ReportFormat @default(PDF)
+  recipients      Json?
+  config          Json?
+  lastRunAt       DateTime?
+  nextRunAt       DateTime?
+  isActive        Boolean    @default(true)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  integration  Integration?    @relation(fields: [integrationId], references: [id])
+  owner        User            @relation(fields: [ownerId], references: [id])
+  template     ReportTemplate? @relation(fields: [templateId], references: [id])
+  templateId   String?
+
+  @@map("scheduled_reports")
+}
+
+model ReportTemplate {
+  id          String       @id @default(cuid())
+  dashboardId String?
+  name        String
+  description String?
+  content     Json
+  isPublic    Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  dashboard     Dashboard?        @relation(fields: [dashboardId], references: [id])
+  reports       ScheduledReport[]
+
+  @@map("report_templates")
+}
+
+// ─── Audit Models ─────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id              String   @id @default(cuid())
+  organizationId  String?
+  userId          String?
+  action          String
+  resourceType    String
+  resourceId      String?
+  details         Json?
+  ipAddress       String?
+  userAgent       String?
+  createdAt       DateTime @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  user         User?         @relation(fields: [userId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([userId])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// ─── Subscription & Usage Models ──────────────────────────────────────────────
+
+model Subscription {
+  id            String    @id @default(cuid())
+  userId        String
+  plan          String
+  status        String    @default("active")
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAt      DateTime?
+  canceledAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usageMetrics  UsageMetric[]
+
+  @@map("subscriptions")
+}
+
+model UsageMetric {
+  id               String   @id @default(cuid())
+  subscriptionId   String
+  metricName       String
+  quantity         Int
+  periodStart      DateTime
+  periodEnd        DateTime
+  createdAt        DateTime @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId, metricName, periodStart])
+  @@map("usage_metrics")
+}
