@@ -1,133 +1,114 @@
-import { NextRequest, NextResponse } from "next/server";
-import { db, genId, now } from "@/lib/db";
-import { requireAuth } from "@/lib/auth";
-import type { Alert, PaginatedResponse } from "@/types";
+import { NextRequest, NextResponse } from 'next/server';
+import { AlertService } from '@/services/alert-service';
 
-export async function GET(req: NextRequest) {
+const alertService = new AlertService();
+
+export async function GET(request: NextRequest) {
   try {
-    requireAuth(req);
-    const url = new URL(req.url);
-    const page = Math.max(1, parseInt(url.searchParams.get("page") || "1"));
-    const pageSize = Math.min(100, parseInt(url.searchParams.get("pageSize") || "20"));
-    const severity = url.searchParams.get("severity") || "";
-    const status = url.searchParams.get("status") || "";
-    const deviceId = url.searchParams.get("deviceId") || "";
-    const search = url.searchParams.get("search")?.toLowerCase() || "";
-    const sortBy = url.searchParams.get("sortBy") || "createdAt";
-    const sortOrder = url.searchParams.get("sortOrder") || "desc";
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
 
-    let filtered = [...db.alerts];
-
-    if (severity) filtered = filtered.filter((a) => a.severity === severity);
-    if (status) filtered = filtered.filter((a) => a.status === status);
-    if (deviceId) filtered = filtered.filter((a) => a.deviceId === deviceId);
-    if (search) {
-      filtered = filtered.filter(
-        (a) =>
-          a.title.toLowerCase().includes(search) ||
-          a.message.toLowerCase().includes(search)
-      );
+    if (id) {
+      const alert = alertService.getById(id);
+      if (!alert) {
+        return NextResponse.json({ error: 'Alert not found' }, { status: 404 });
+      }
+      return NextResponse.json(alert);
     }
 
-    filtered.sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
-      const aVal = a[sortBy] ?? "";
-      const bVal = b[sortBy] ?? "";
-      const cmp = String(aVal).localeCompare(String(bVal), undefined, { numeric: true });
-      return sortOrder === "asc" ? cmp : -cmp;
-    });
-
-    const total = filtered.length;
-    const start = (page - 1) * pageSize;
-    const paged = filtered.slice(start, start + pageSize);
-
-    const enriched = paged.map((alert) => {
-      const device = db.devices.find((d) => d.id === alert.deviceId);
-      return { ...alert, deviceName: device?.name || "Unknown", deviceLocation: device?.location || "" };
-    });
-
-    const counts = {
-      total: db.alerts.length,
-      active: db.alerts.filter((a) => a.status === "active").length,
-      acknowledged: db.alerts.filter((a) => a.status === "acknowledged").length,
-      resolved: db.alerts.filter((a) => a.status === "resolved").length,
-      critical: db.alerts.filter((a) => a.severity === "critical" && a.status === "active").length,
-      high: db.alerts.filter((a) => a.severity === "high" && a.status === "active").length,
-      medium: db.alerts.filter((a) => a.severity === "medium" && a.status === "active").length,
-      low: db.alerts.filter((a) => a.severity === "low" && a.status === "active").length,
+    const filter = {
+      status: searchParams.get('status')?.split(',') as any,
+      severity: searchParams.get('severity')?.split(',') as any,
+      deviceId: searchParams.get('deviceId') || undefined,
+      category: searchParams.get('category') as any,
     };
 
-    const response: PaginatedResponse<Alert> & { counts: typeof counts } = {
-      data: enriched,
-      total,
-      page,
-      pageSize,
-      totalPages: Math.ceil(total / pageSize),
-      counts,
-    };
-
-    return NextResponse.json(response);
-  } catch (err) {
-    if (err instanceof Error && err.message === "UNAUTHORIZED") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: "Failed to fetch alerts" }, { status: 500 });
+    const alerts = alertService.getAll(filter);
+    return NextResponse.json({
+      alerts,
+      total: alerts.length,
+      stats: alertService.getStats(),
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
-    requireAuth(req);
-    const body = await req.json();
-    const { deviceId, severity, title, message, metric, threshold, currentValue } = body;
-
-    if (!title || !message || !severity) {
-      return NextResponse.json(
-        { error: "title, message, and severity are required" },
-        { status: 400 }
-      );
-    }
-
-    const validSeverities = ["critical", "high", "medium", "low", "info"];
-    if (!validSeverities.includes(severity)) {
-      return NextResponse.json(
-        { error: `Invalid severity. Must be one of: ${validSeverities.join(", ")}` },
-        { status: 400 }
-      );
-    }
-
-    const timestamp = now();
-    const alert: Alert = {
-      id: genId(),
-      deviceId: deviceId || undefined,
-      severity,
-      title,
-      message,
-      metric: metric || undefined,
-      threshold: threshold !== undefined ? Number(threshold) : undefined,
-      currentValue: currentValue !== undefined ? Number(currentValue) : undefined,
-      status: "active",
-      createdAt: timestamp,
-      metadata: body.metadata || {},
-    };
-
-    db.alerts.push(alert);
-
-    db.activityLogs.unshift({
-      id: genId(),
-      type: "alert",
-      action: "created",
-      description: `Alert created: ${title}`,
-      deviceId: deviceId || undefined,
-      severity: severity === "critical" || severity === "high" ? "error" : "warning",
-      metadata: { severity },
-      timestamp,
-    });
-
+    const body = await request.json();
+    const alert = alertService.create(body);
     return NextResponse.json(alert, { status: 201 });
-  } catch (err) {
-    if (err instanceof Error && err.message === "UNAUTHORIZED") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+    const action = searchParams.get('action');
+
+    if (!id) {
+      return NextResponse.json({ error: 'Alert ID required' }, { status: 400 });
     }
-    return NextResponse.json({ error: "Failed to create alert" }, { status: 500 });
+
+    let result;
+    switch (action) {
+      case 'acknowledge':
+        const ackBody = await request.json().catch(() => ({}));
+        result = alertService.acknowledge(id, ackBody.userId || 'system');
+        break;
+      case 'resolve':
+        result = alertService.resolve(id);
+        break;
+      case 'suppress':
+        result = alertService.suppress(id);
+        break;
+      default:
+        return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
+    }
+
+    if (!result) {
+      return NextResponse.json({ error: 'Alert not found or invalid action' }, { status: 404 });
+    }
+
+    return NextResponse.json(result);
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+
+    if (!id) {
+      return NextResponse.json({ error: 'Alert ID required' }, { status: 400 });
+    }
+
+    const deleted = alertService.delete(id);
+
+    if (!deleted) {
+      return NextResponse.json({ error: 'Alert not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }

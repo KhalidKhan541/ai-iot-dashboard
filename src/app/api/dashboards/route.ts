@@ -1,111 +1,99 @@
-import { NextRequest, NextResponse } from "next/server";
-import { db, genId, now } from "@/lib/db";
-import { requireAuth } from "@/lib/auth";
-import type { Dashboard, PaginatedResponse } from "@/types";
+import { NextRequest, NextResponse } from 'next/server';
+import { DashboardService } from '@/services/dashboard-service';
 
-export async function GET(req: NextRequest) {
+const dashboardService = new DashboardService();
+
+export async function GET(request: NextRequest) {
   try {
-    requireAuth(req);
-    const url = new URL(req.url);
-    const page = Math.max(1, parseInt(url.searchParams.get("page") || "1"));
-    const pageSize = Math.min(100, parseInt(url.searchParams.get("pageSize") || "20"));
-    const search = url.searchParams.get("search")?.toLowerCase() || "";
-    const isDefault = url.searchParams.get("isDefault");
-    const isPublic = url.searchParams.get("isPublic");
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
 
-    let filtered = [...db.dashboards];
-
-    if (search) {
-      filtered = filtered.filter(
-        (d) =>
-          d.name.toLowerCase().includes(search) ||
-          d.description.toLowerCase().includes(search) ||
-          d.tags.some((t) => t.toLowerCase().includes(search))
-      );
-    }
-    if (isDefault !== null && isDefault !== undefined) {
-      filtered = filtered.filter((d) => d.isDefault === (isDefault === "true"));
-    }
-    if (isPublic !== null && isPublic !== undefined) {
-      filtered = filtered.filter((d) => d.isPublic === (isPublic === "true"));
+    if (id) {
+      const dashboard = dashboardService.getById(id);
+      if (!dashboard) {
+        return NextResponse.json({ error: 'Dashboard not found' }, { status: 404 });
+      }
+      return NextResponse.json(dashboard);
     }
 
-    filtered.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-
-    const total = filtered.length;
-    const start = (page - 1) * pageSize;
-    const paged = filtered.slice(start, start + pageSize);
-
-    const response: PaginatedResponse<Dashboard> = {
-      data: paged,
-      total,
-      page,
-      pageSize,
-      totalPages: Math.ceil(total / pageSize),
+    const filter = {
+      ownerId: searchParams.get('ownerId') || undefined,
+      shared: searchParams.get('shared') === 'true' ? true : undefined,
+      tags: searchParams.get('tags')?.split(','),
     };
 
-    return NextResponse.json(response);
-  } catch (err) {
-    if (err instanceof Error && err.message === "UNAUTHORIZED") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: "Failed to fetch dashboards" }, { status: 500 });
+    const dashboards = dashboardService.getAll(filter);
+    return NextResponse.json({
+      dashboards,
+      total: dashboards.length,
+      stats: dashboardService.getStats(),
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
-    const auth = requireAuth(req);
-    const body = await req.json();
-    const { name, description, layout, widgets, isPublic, tags, refreshIntervalMs } = body;
-
-    if (!name) {
-      return NextResponse.json({ error: "Dashboard name is required" }, { status: 400 });
-    }
-
-    if (name.length > 100) {
-      return NextResponse.json({ error: "Dashboard name must be 100 characters or less" }, { status: 400 });
-    }
-
-    const existing = db.dashboards.find((d) => d.name === name && d.ownerId === auth.userId);
-    if (existing) {
-      return NextResponse.json({ error: "A dashboard with this name already exists" }, { status: 409 });
-    }
-
-    const timestamp = now();
-    const dashboard: Dashboard = {
-      id: genId(),
-      name,
-      description: description || "",
-      layout: layout || { columns: 12, rowHeight: 60, gap: 16 },
-      widgets: widgets || [],
-      isDefault: db.dashboards.length === 0,
-      isPublic: isPublic ?? false,
-      ownerId: auth.userId,
-      sharedWith: [],
-      tags: tags || [],
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      refreshIntervalMs: refreshIntervalMs || 30000,
-    };
-
-    db.dashboards.push(dashboard);
-
-    db.activityLogs.unshift({
-      id: genId(),
-      type: "system",
-      action: "dashboard_created",
-      description: `Dashboard "${name}" created`,
-      severity: "success",
-      metadata: { widgetCount: dashboard.widgets.length },
-      timestamp,
-    });
-
+    const body = await request.json();
+    const dashboard = dashboardService.create(body);
     return NextResponse.json(dashboard, { status: 201 });
-  } catch (err) {
-    if (err instanceof Error && err.message === "UNAUTHORIZED") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+
+    if (!id) {
+      return NextResponse.json({ error: 'Dashboard ID required' }, { status: 400 });
     }
-    return NextResponse.json({ error: "Failed to create dashboard" }, { status: 500 });
+
+    const body = await request.json();
+    const dashboard = dashboardService.update(id, body);
+
+    if (!dashboard) {
+      return NextResponse.json({ error: 'Dashboard not found' }, { status: 404 });
+    }
+
+    return NextResponse.json(dashboard);
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+
+    if (!id) {
+      return NextResponse.json({ error: 'Dashboard ID required' }, { status: 400 });
+    }
+
+    const deleted = dashboardService.delete(id);
+
+    if (!deleted) {
+      return NextResponse.json({ error: 'Dashboard not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }
